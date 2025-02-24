@@ -126,29 +126,6 @@ validate_sku() {
     fi
 }    
 
-# Validate runtime against the specified OS
-validate_runtime $os $runtime $runtime_version
-validate_sku $function_type $sku
-
-# Validate existing plan if specified
-if [ -n "$existing_plan_name" ]; then
-    echo "Validating existing plan: $existing_plan_name"
-    if ! az appservice plan show --name "$existing_plan_name" --resource-group "$resource_group" >/dev/null 2>&1; then
-        if [ "$function_type" == "premium" ]; then
-            echo "Premium plan $existing_plan_name does not exist, creating it..."
-            az functionapp plan create --resource-group "$resource_group" --name "$existing_plan_name" --location "$location" --sku "$sku" --is-linux $is_linux
-            echo "Premium plan $existing_plan_name created successfully"
-        elif [ "$function_type" == "appserviceplan" ]; then
-            echo "App Service Plan $existing_plan_name does not exist, creating it..."
-            az appservice plan create --resource-group "$resource_group" --name "$existing_plan_name" --location "$location" --sku "$sku" --is-linux $is_linux
-            echo "App Service Plan $existing_plan_name created successfully"
-        else
-            echo "Error: App Service Plan $existing_plan_name does not exist in resource group $resource_group"
-            exit 1
-        fi
-    fi
-    echo "Existing plan $existing_plan_name validated successfully"
-fi
 
 # Check if type is premium or app service plan, then SKU is required
 # Validate SKU for premium and appserviceplan types
@@ -264,6 +241,8 @@ if [ -n "$app_insights" ]; then
     echo "Using Application Insights: $app_insights"
 fi
 
+
+
 # Create azure function plan based on function type
 if [ "$function_type" == "appserviceplan" ]; then
     if [ -n "$existing_plan_name" ]; then
@@ -312,7 +291,14 @@ else
     exit 1    
 fi
 
+
 echo "Function app $function_app_name created successfully in resource group $resource_group."
+
+if [ -z "$app_insights" ]; then
+    app_insights="$function_app_name"
+    
+fi
+
 
 # VNet integration if subnet_id is provided
 if [ -n "$subnet_id" ]; then
@@ -343,11 +329,13 @@ if [ -n "$subnet_id" ]; then
 fi
 
 # Handle service principal assignment
+
 if [ -n "$sp_id" ]; then
     echo "Using existing service principal ID: $sp_id"
     funcappscope="/subscriptions/$subscription_id/resourceGroups/$resource_group/providers/Microsoft.Web/sites/$function_app_name"
     storagescope="/subscriptions/$subscription_id/resourceGroups/$resource_group/providers/Microsoft.Storage/storageAccounts/$storage_account_name"
-    
+    applicationinsightsscope="/subscriptions/$subscription_id/resourceGroups/$resource_group/providers/Microsoft.insights/components/$app_insights"
+
     # Assign Owner role to the existing service principal for the function app
     echo "Assigning Owner role to existing service principal for function app $function_app_name"
     az role assignment create --assignee $sp_id --role Owner --scope $funcappscope
@@ -355,6 +343,10 @@ if [ -n "$sp_id" ]; then
     # Assign Storage Account Contributor role to the existing service principal
     echo "Assigning Storage Account Contributor role to existing service principal"
     az role assignment create --role "Storage Account Contributor" --assignee $sp_id --scope $storagescope
+
+    # Assign Application Insights owner role to the existing service principal
+    echo "Assigning Application Insights Owner role to existing service principal"
+    az role assignment create  --role "Owner" --assignee $sp_id --scope $applicationinsightsscope
     
     # Get service principal details for env file
     sp_details=$(az ad sp show --id $sp_id --query "{clientId:appId,tenantId:appOwnerOrganizationId}" -o json)
@@ -364,20 +356,33 @@ if [ -n "$sp_id" ]; then
     # Note: Client secret cannot be retrieved for existing SP, user needs to manage it separately
     echo "Using existing service principal. Please manage client secret separately."
 else
+    echo "no service principal ID provided, creating a new service principal."
     # create assign service principal access to azure function 
     # Subscription ID (replace with your actual subscription ID)
     #subscription_id=$(az account show --query "id" -o tsv)
     sp_output=$(az ad sp create-for-rbac --name $funcapp_sp_name --output json)
-    echo "$sp_output"
+
     client_id=$(echo $sp_output | jq -r '.appId')
     client_secret=$(echo $sp_output | jq -r '.password')
+    
     tenant_id=$(echo $sp_output | jq -r '.tenant')
     funcappscope="/subscriptions/$subscription_id/resourceGroups/$resource_group/providers/Microsoft.Web/sites/$function_app_name"
     storagescope="/subscriptions/$subscription_id/resourceGroups/$resource_group/providers/Microsoft.Storage/storageAccounts/$storage_account_name"
+    applicationinsightsscope="/subscriptions/$subscription_id/resourceGroups/$resource_group/providers/Microsoft.insights/components/$app_insights"
+
+
+    # Assign the storage account write access to the service principal
+    echo "Assigning Storage Account Contributor role to service principal $client_id for storage account $storage_account_name."
+    az role assignment create --role "Storage Account Contributor" --assignee $client_id --scope $storagescope
+    echo "Service principal $client_id has been assigned the Storage Account Contributor role for storage account $storage_account_name."
 
     # Assign Owner role to the service principal for the function app
     echo "Assgin $funcapp_sp_name Owner to function app $function_app_name."
     az role assignment create --assignee $client_id --role Owner --scope $funcappscope
+
+    # Assign Application Insights owner role to the existing service principal
+    echo "Assigning Application Insights Owner role to existing service principal"
+    az role assignment create  --role "Owner" --assignee $sp_id --scope $applicationinsightsscope
 
     #echo "exec az ad sp create-for-rbac --name $funcapp_sp_name  --role \"Owner\" --scopes /subscriptions/$subscription_id/resourceGroups/$resource_group/providers/Microsoft.Web/sites/$function_app_name --output json"
     #sp_output=$(az ad sp create-for-rbac --name $funcapp_sp_name  --role Owner --scopes /subscriptions/$subscription_id/resourceGroups/$resource_group/providers/Microsoft.Web/sites/$function_app_name --output json)
@@ -397,10 +402,7 @@ else
     fi
 fi
 
-# Assign the storage account write access to the service principal
-echo "Assigning Storage Account Contributor role to service principal $client_id for storage account $storage_account_name."
-az role assignment create --role "Storage Account Contributor" --assignee $client_id --scope $storagescope
-echo "Service principal $client_id has been assigned the Storage Account Contributor role for storage account $storage_account_name."
+
 
 # Confirm successful creation of the function app
 echo "Function app $function_app_name has been created successfully."
