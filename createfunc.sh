@@ -294,6 +294,8 @@ fi
 
 echo "Function app $function_app_name created successfully in resource group $resource_group."
 
+az resource update --resource-group  $resource_group --name $function_app_name --set properties.dnsConfiguration.dnsAltServer=168.63.129.16 --resource-type "Microsoft.Web/sites"
+
 if [ -z "$app_insights" ]; then
     app_insights="$function_app_name"
     
