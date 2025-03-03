@@ -16,10 +16,11 @@ extract_vnet_name() {
 
 # Function to display help message
 show_help() {
-    echo "Usage: $0 -s SUBSCRIPTION -g RESOURCE_GROUP -l LOCATION -f FUNCTION_APP_NAME -r RUNTIME -o OS -t FUNCTION_TYPE -k SKU [-p PLAN_NAME] [-n SUBNET_ID] [-i SP_ID] [-a STORAGE_ACCOUNT] [-m APP_INSIGHTS]"
+    echo "Usage: $0 -s SUBSCRIPTION -g RESOURCE_GROUP -l LOCATION -b MAX_BURST -f FUNCTION_APP_NAME -r RUNTIME -o OS -t FUNCTION_TYPE -k SKU [-p PLAN_NAME] [-n SUBNET_ID] [-i SP_ID] [-a STORAGE_ACCOUNT] [-m APP_INSIGHTS]"
     echo "  -s  Subscription ID"
     echo "  -g  Resource group name"
     echo "  -l  Location"
+    echo "  -b  The maximum number of elastic workers for App plan."
     echo "  -f  Function app name"
     echo "  -r  Runtime (e.g., java nodejs, python)"
     echo "  -v  Runtime version (e.g., 8, 12, 3.8)"
@@ -41,11 +42,12 @@ show_help() {
 }
 
 # Parse command line arguments
-while getopts ":s:g:l:f:r:v:o:t:k:p:n:i:a:m:h" opt; do
+while getopts ":s:g:l:b:f:r:v:o:t:k:p:n:i:a:m:h" opt; do
   case ${opt} in
     s ) subscription_id=$OPTARG;;
     g ) resource_group=$OPTARG;;
     l ) location=$OPTARG;;
+    b ) max_burst=$OPTARG;;
     f ) function_app_name=$OPTARG;;
     r ) runtime=$OPTARG;;
     v ) runtime_version=$OPTARG;;
@@ -186,11 +188,11 @@ if [ -n "$existing_plan_name" ]; then
     if ! az appservice plan show --name "$existing_plan_name" --resource-group "$resource_group" >/dev/null 2>&1; then
         if [ "$function_type" == "premium" ]; then
             echo "Premium plan $existing_plan_name does not exist, creating it..."
-            az functionapp plan create --resource-group "$resource_group" --name "$existing_plan_name" --location "$location" --sku "$sku" --is-linux $is_linux
+            az functionapp plan create --resource-group "$resource_group" --name "$existing_plan_name" --location "$location" --sku "$sku" --is-linux $is_linux --max-burst $max_burst
             echo "Premium plan $existing_plan_name created successfully"
         elif [ "$function_type" == "appserviceplan" ]; then
             echo "App Service Plan $existing_plan_name does not exist, creating it..."
-            az appservice plan create --resource-group "$resource_group" --name "$existing_plan_name" --location "$location" --sku "$sku" --is-linux $is_linux
+            az appservice plan create --resource-group "$resource_group" --name "$existing_plan_name" --location "$location" --sku "$sku" --is-linux $is_linux --max-burst $max_burst
             echo "App Service Plan $existing_plan_name created successfully"
         else
             echo "Error: App Service Plan $existing_plan_name does not exist in resource group $resource_group"
@@ -199,6 +201,7 @@ if [ -n "$existing_plan_name" ]; then
     fi
     echo "Existing plan $existing_plan_name validated successfully"
 fi
+
 
 # Set storage account name
 if [ -n "$storage_account" ]; then
